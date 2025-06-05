@@ -1,35 +1,39 @@
-import { useEffect, useRef } from 'react';
+// src/components/Game.jsx
+import { useEffect, useRef, useState } from 'react';
 import p5 from 'p5';
 
-export default function Game({ setScore }) {
+export default function Game({ setScore, walletAddress }) {
   const sketchRef = useRef(null);
   const p5Instance = useRef(null);
+  const [scoreHistory, setScoreHistory] = useState([]);
+
+  useEffect(() => {
+    // Load score history from localStorage on mount
+    const saved = localStorage.getItem('snake_score_history');
+    if (saved) setScoreHistory(JSON.parse(saved));
+  }, []);
 
   useEffect(() => {
     const sketch = (p) => {
       let snake = [];
       let food;
-      const tileSize = 32; // ukuran tile, sesuaikan dengan gambar
+      const tileSize = 32;
       let score = 0;
       let gameOver = false;
+      let saved = false; // Flag agar skor hanya disimpan sekali
 
       let dx = 0;
       let dy = 0;
       let started = false;
       let shouldGrow = false;
 
-      // Gambar
       let imgHeadRight, imgBody, imgTail, imgFood, imgWall;
 
       p.preload = () => {
-        // Load image sesuai path public/assets/snake/
         imgHeadRight = p.loadImage('/assets/snake/snake_green_head_64.png');
-
         imgBody = p.loadImage('/assets/snake/snake_green_blob_64.png');
         imgTail = p.loadImage('/assets/snake/snake_green_xx.png');
-
         imgFood = p.loadImage('/assets/snake/apple_alt_64.png');
-
         imgWall = p.loadImage('/assets/snake/wall_block_64_0.png');
       };
 
@@ -37,7 +41,6 @@ export default function Game({ setScore }) {
         snake = [];
         const cols = p.floor(p.width / tileSize);
         const rows = p.floor(p.height / tileSize);
-        // Mulai ular di tengah area dalam dinding
         const startX = p.floor(cols / 2);
         const startY = p.floor(rows / 2);
         snake[0] = p.createVector(startX, startY);
@@ -48,6 +51,7 @@ export default function Game({ setScore }) {
         shouldGrow = false;
         gameOver = false;
         started = false;
+        saved = false; // Reset flag saat restart game
         if (setScore) setScore(score);
       };
 
@@ -56,7 +60,6 @@ export default function Game({ setScore }) {
         const rows = p.floor(p.height / tileSize);
         let pos;
         do {
-          // Pastikan food muncul di dalam area, bukan di dinding
           pos = p.createVector(
             p.floor(p.random(1, cols - 1)),
             p.floor(p.random(1, rows - 1))
@@ -65,31 +68,51 @@ export default function Game({ setScore }) {
         return pos;
       };
 
+      // Simpan skor ke history skor di localStorage
+      const saveScoreToHistory = (finalScore) => {
+        if (finalScore <= 0 || !walletAddress) return;
+
+        let current = JSON.parse(localStorage.getItem('snake_score_history')) || [];
+
+        current.push({
+          address: walletAddress,
+          score: finalScore,
+          date: new Date().toISOString(),
+        });
+
+        // Simpan ulang
+        localStorage.setItem('snake_score_history', JSON.stringify(current));
+        setScoreHistory(current);
+      };
+
       p.setup = () => {
         p.createCanvas(1200, 400);
-        p.frameRate(5);
+        p.frameRate(3);
         initGame();
       };
 
       p.draw = () => {
-        p.background(240);
+        // Background gradient ungu-hijau (manual fill rect + gradient)
+        const ctx = p.drawingContext;
+        const gradient = ctx.createLinearGradient(0, 0, p.width, 0);
+        gradient.addColorStop(0, '#6b21a8'); // purple-700
+        gradient.addColorStop(0.5, '#4c1d95'); // purple-800
+        gradient.addColorStop(1, '#16a34a'); // green-600
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, p.width, p.height);
 
-        // Gambar dinding (sekitar pinggir)
+        // Draw walls
         for (let x = 0; x < p.width; x += tileSize) {
-          // atas
           p.image(imgWall, x, 0, tileSize, tileSize);
-          // bawah
           p.image(imgWall, x, p.height - tileSize, tileSize, tileSize);
         }
         for (let y = 0; y < p.height; y += tileSize) {
-          // kiri
           p.image(imgWall, 0, y, tileSize, tileSize);
-          // kanan
           p.image(imgWall, p.width - tileSize, y, tileSize, tileSize);
         }
 
         if (gameOver) {
-          p.fill(50);
+          p.fill(255, 255, 255, 220);
           p.textSize(32);
           p.textAlign(p.CENTER, p.CENTER);
           p.text('Game Over', p.width / 2, p.height / 2 - 20);
@@ -97,29 +120,35 @@ export default function Game({ setScore }) {
           p.text(`Score: ${score}`, p.width / 2, p.height / 2 + 10);
           p.textSize(16);
           p.text('Press SPACE to Restart', p.width / 2, p.height / 2 + 40);
+
+          // Simpan skor hanya sekali
+          if (!saved) {
+            saveScoreToHistory(score);
+            saved = true;
+          }
+
           return;
         }
 
         if (!started) {
-          p.fill(70);
+          p.fill(200, 200, 200, 180);
           p.textSize(20);
           p.textAlign(p.CENTER, p.CENTER);
           p.text('Press Arrow Key to Start', p.width / 2, p.height / 2);
           return;
         }
 
-        // Move body
+        // Move snake body
         for (let i = snake.length - 1; i > 0; i--) {
           snake[i] = snake[i - 1].copy();
         }
 
-        // Move head
         snake[0].x += dx;
         snake[0].y += dy;
 
-        // Check wall collision (termasuk dinding)
+        // Check collision with wall
         if (
-          snake[0].x < 1 || // karena dinding di tile 0
+          snake[0].x < 1 ||
           snake[0].y < 1 ||
           snake[0].x >= p.width / tileSize - 1 ||
           snake[0].y >= p.height / tileSize - 1
@@ -128,7 +157,7 @@ export default function Game({ setScore }) {
           return;
         }
 
-        // Check self collision
+        // Check collision with self
         for (let i = 1; i < snake.length; i++) {
           if (snake[0].x === snake[i].x && snake[0].y === snake[i].y) {
             gameOver = true;
@@ -149,7 +178,6 @@ export default function Game({ setScore }) {
           shouldGrow = false;
         }
 
-        // Draw food
         p.image(imgFood, food.x * tileSize, food.y * tileSize, tileSize, tileSize);
 
         // Draw snake
@@ -158,7 +186,6 @@ export default function Game({ setScore }) {
           const posY = snake[i].y * tileSize;
 
           if (i === 0) {
-            // Head dengan rotasi sesuai arah
             p.push();
             p.translate(posX + tileSize / 2, posY + tileSize / 2);
 
@@ -172,10 +199,8 @@ export default function Game({ setScore }) {
             p.image(imgHeadRight, -tileSize / 2, -tileSize / 2, tileSize, tileSize);
             p.pop();
           } else if (i === snake.length - 1) {
-            // Tail
             p.image(imgTail, posX, posY, tileSize, tileSize);
           } else {
-            // Body
             p.image(imgBody, posX, posY, tileSize, tileSize);
           }
         }
@@ -206,11 +231,30 @@ export default function Game({ setScore }) {
     return () => {
       p5Instance.current.remove();
     };
-  }, [setScore]);
+  }, [setScore, walletAddress]);
 
   return (
     <div>
-      <div ref={sketchRef}></div>
+      <div ref={sketchRef} className="rounded-lg overflow-hidden shadow-lg border-4 border-green-600 mx-auto"></div>
+
+      {/* History Score */}
+      <div className="mt-4 p-4 bg-white bg-opacity-90 rounded shadow max-w-md mx-auto text-gray-900">
+        <h3 className="text-xl font-bold mb-2 text-center">History Scores</h3>
+        {scoreHistory.length === 0 && (
+          <p className="text-center">No scores submitted yet.</p>
+        )}
+        <ol className="list-decimal list-inside space-y-1 max-h-64 overflow-auto">
+          {scoreHistory.map(({ address, score, date }, idx) => (
+            <li key={idx} className="flex justify-between">
+              <span className="truncate max-w-[250px]" title={address}>{address}</span>
+              <span>{score}</span>
+              <span className="text-gray-500 text-sm ml-4 whitespace-nowrap">
+                {new Date(date).toLocaleString()}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
     </div>
   );
 }

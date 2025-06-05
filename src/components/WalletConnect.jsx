@@ -1,10 +1,8 @@
 import { useState } from 'react';
-import { StargateClient, SigningStargateClient } from '@cosmjs/stargate';
 
 export default function WalletConnect({ setWalletAddress, setBalance, setStatus, score }) {
-  const [client, setClient] = useState(null);
-  const [localBalance, setLocalBalance] = useState(null);
   const [walletAddressLocal, setWalletAddressLocal] = useState(null);
+  const [localBalance, setLocalBalance] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const RPC_ENDPOINTS = [
@@ -21,147 +19,99 @@ export default function WalletConnect({ setWalletAddress, setBalance, setStatus,
     try {
       await window.keplr.enable('lumera-testnet-1');
 
-      let connectedClient = null;
-      for (const endpoint of RPC_ENDPOINTS) {
-        try {
-          connectedClient = await StargateClient.connect(endpoint);
-          console.log(`Connected to RPC: ${endpoint}`);
-          break;
-        } catch (err) {
-          console.warn(`Failed to connect to ${endpoint}:`, err.message);
-        }
-      }
+      const offlineSigner = window.getOfflineSigner('lumera-testnet-1');
+      const accounts = await offlineSigner.getAccounts();
+      const address = accounts[0].address;
 
-      if (!connectedClient) {
-        throw new Error('Failed to connect to all RPC endpoints.');
-      }
-
-      setClient(connectedClient);
-
-      const account = await window.keplr.getKey('lumera-testnet-1');
-      const address = account.bech32Address;
       setWalletAddress(address);
       setWalletAddressLocal(address);
 
-      const allBalances = await connectedClient.getAllBalances(address);
-      console.log('All balances:', allBalances);
+      // Connect to RPC to get balance
+      const response = await fetch(`${RPC_ENDPOINTS[0]}/cosmos/bank/v1beta1/balances/${address}`);
+      const data = await response.json();
 
-      const lumeraBalanceObj = allBalances.find(b => b.denom === 'ulumera');
-      const balance = lumeraBalanceObj
-        ? parseInt(lumeraBalanceObj.amount, 10) / 1_000_000
-        : 0;
+      const coin = data.balances.find((c) => c.denom === 'ulmn') || { amount: '0' };
+      const bal = (parseInt(coin.amount) / 1_000_000).toFixed(6);
 
-      setLocalBalance(balance);
-      setBalance(balance);
-      setStatus(`✅ Connected: ${address} | Balance: ${balance} LUMERA-TESTNET-1`);
+      setBalance(bal);
+      setLocalBalance(bal);
+      setStatus(`Connected: ${address}, Balance: ${bal} LUMN`);
     } catch (error) {
-      console.error('Wallet connection error:', error);
-      setStatus(`Error: ${error.message}`);
+      setStatus('Failed to connect wallet.');
+      console.error(error);
     }
   };
 
-  const disconnectWallet = () => {
-    setClient(null);
-    setWalletAddressLocal(null);
-    setLocalBalance(null);
-    setWalletAddress(null);
-    setBalance(null);
-    setStatus('Disconnected');
-  };
-
+  // Submit score only by signing message (no blockchain tx)
   const submitScore = async () => {
     if (!window.keplr || !walletAddressLocal) {
       setStatus('Please connect wallet first.');
       return;
     }
 
+    if (score <= 0) {
+      setStatus('Score must be greater than 0 to submit.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const signer = window.getOfflineSigner('lumera-testnet-1');
-      const signingClient = await SigningStargateClient.connectWithSigner(
-        RPC_ENDPOINTS[0],
-        signer
-      );
-
-      const msg = {
-        typeUrl: '/cosmos.bank.v1beta1.MsgSend',
-        value: {
-          fromAddress: walletAddressLocal,
-          toAddress: walletAddressLocal,
-          amount: [{ denom: 'ulumera', amount: '1' }],
-        },
+      const signMessage = {
+        score,
+        timestamp: Date.now(),
+        address: walletAddressLocal,
       };
+      const signMessageString = JSON.stringify(signMessage);
 
-      const fee = {
-        amount: [{ denom: 'ulumera', amount: '5000' }],
-        gas: '200000',
-      };
+      if (window.keplr && window.keplr.signArbitrary) {
+        const signature = await window.keplr.signArbitrary(
+          'lumera-testnet-1',
+          walletAddressLocal,
+          signMessageString
+        );
 
-      const result = await signingClient.signAndBroadcast(
-        walletAddressLocal,
-        [msg],
-        fee,
-        `Score: ${score}`
-      );
+        setStatus(`✅ Score signed! Signature:\n${signature.signature}`);
 
-      if (result.code === 0) {
-        setStatus(`✅ Score submitted! Tx Hash: ${result.transactionHash}`);
+        // TODO: Kirim signature dan message ke backend verifikasi di sini
+        console.log('Signed message:', signMessageString);
+        console.log('Signature:', signature.signature);
       } else {
-        setStatus(`❌ Failed to submit score. Error code: ${result.code}`);
+        setStatus('Keplr does not support signArbitrary for this chain.');
+        console.warn('Keplr signArbitrary not supported on this chain.');
       }
     } catch (error) {
-      console.error('Score submission error:', error);
-      setStatus(`Error submitting score: ${error.message}`);
+      console.error('Score signing error:', error);
+      setStatus(`Error signing score: ${error.message}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="flex flex-col items-center gap-4">
-      {!walletAddressLocal ? (
-        <button
-          onClick={connectWallet}
-          className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
-        >
-          Connect Keplr Wallet
-        </button>
-      ) : (
-        <>
-          <button
-            onClick={disconnectWallet}
-            className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
-          >
-            Disconnect Wallet
-          </button>
+    <div className="mb-4">
+      <button
+        onClick={connectWallet}
+        className="px-4 py-2 mr-4 bg-blue-600 hover:bg-blue-700 text-white rounded"
+      >
+        Connect Wallet
+      </button>
 
-          <button
-            onClick={submitScore}
-            className={`px-4 py-2 rounded ${
-              localBalance && localBalance >= 0.01 && !isSubmitting
-                ? 'bg-green-500 hover:bg-green-600'
-                : 'bg-gray-400 cursor-not-allowed'
-            } text-white`}
-            disabled={!localBalance || localBalance < 0.01 || isSubmitting}
-          >
-            {isSubmitting ? 'Submitting...' : 'Submit Score'}
-          </button>
+      <button
+        onClick={submitScore}
+        disabled={!walletAddressLocal || isSubmitting || score <= 0}
+        className={`px-4 py-2 rounded ${
+          walletAddressLocal && !isSubmitting && score > 0
+            ? 'bg-green-500 hover:bg-green-600'
+            : 'bg-gray-400 cursor-not-allowed'
+        } text-white`}
+      >
+        {isSubmitting ? 'Signing...' : 'Submit Score'}
+      </button>
 
-          <a
-            href="https://www.stake-hub.xyz/services/faucet"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-          >
-            Get Testnet LUMERA (Faucet)
-          </a>
-
-          <div>
-            <p>Wallet Address: {walletAddressLocal}</p>
-            <p>Balance: {localBalance ?? 0} LUMERA</p>
-          </div>
-        </>
-      )}
+      <div className="mt-2 text-sm break-all">
+        {walletAddressLocal && <p>Wallet: {walletAddressLocal}</p>}
+        {localBalance !== null && <p>Balance: {localBalance} LUMN</p>}
+      </div>
     </div>
   );
 }

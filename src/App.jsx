@@ -14,7 +14,7 @@ function App() {
     <div className="min-h-screen flex flex-col items-center p-4
                     bg-gradient-to-r from-purple-700 via-purple-800 to-green-600
                     text-white">
-      <h1 className="text-3xl font-bold mb-4">Snake Game with Lumera Testnet</h1>
+      <h1 className="text-3xl font-bold mb-4">Snake Game with Lumera WHTech</h1>
 
       <WalletConnect
         setWalletAddress={setWalletAddress}
